@@ -33,6 +33,18 @@ from .edgeworth_risk import (
 )
 from .edgeworth_optimizer import train_edgeworth
 
+# Interaction-SSNN framework (barrier-breaking)
+from .activations import get_activation_double_prime
+from .interaction_integrals import (
+    interaction_cross_moment,
+    interaction_cross_moment_grad,
+)
+from .interaction_risk import (
+    compute_interaction_loss,
+    compute_interaction_gradients,
+)
+from .interaction_optimizer import train_interaction
+
 # Baseline PRS methods
 from .baselines import (
     clump_and_threshold,

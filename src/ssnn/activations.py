@@ -151,6 +151,56 @@ def identity_dE_sigma_prime_dv(v: float) -> float:
     return 0.0
 
 
+# ---------------------------------------------------------------------------
+# Second derivatives E[sigma''(z)] for interaction statistics
+# ---------------------------------------------------------------------------
+#
+# For the interaction-SSNN, the cross-moment E[y sigma(w^T x)] acquires an
+# additional term q_k * E[sigma''(z_k)] where q_k = w_k^T Gamma w_k and
+# Gamma is the interaction tensor.  We need E[sigma''(z)] for z ~ N(0,v).
+
+def relu_E_sigma_double_prime(v: float) -> float:
+    r"""E[ReLU''(z)] for z ~ N(0, v).
+
+    ReLU''(z) = delta(z) in the distributional sense, so
+    E[delta(z)] = phi(0; 0, v) = 1 / sqrt(2 pi v).
+    """
+    if v <= 0:
+        return 0.0
+    return 1.0 / np.sqrt(2.0 * np.pi * v)
+
+
+def sigmoid_E_sigma_double_prime(v: float) -> float:
+    r"""E[sigmoid''(z)] for z ~ N(0, v) under the probit approximation.
+
+    sigma(z) ~ Phi(lambda z), so sigma''(z) ~ -lambda^2 z phi(lambda z).
+    E[-lambda^2 z phi(lambda z)] = 0 by odd symmetry (z phi(lambda z) is odd).
+    """
+    return 0.0
+
+
+def identity_E_sigma_double_prime(v: float) -> float:
+    """E[0] = 0.  Identity has zero second derivative."""
+    return 0.0
+
+
+def relu_dE_sigma_double_prime_dv(v: float) -> float:
+    r"""d/dv E[ReLU''(z)] = d/dv [1/sqrt(2 pi v)] = -1/(2v sqrt(2 pi v))."""
+    if v <= 0:
+        return 0.0
+    return -1.0 / (2.0 * v * np.sqrt(2.0 * np.pi * v))
+
+
+def sigmoid_dE_sigma_double_prime_dv(v: float) -> float:
+    """d/dv 0 = 0."""
+    return 0.0
+
+
+def identity_dE_sigma_double_prime_dv(v: float) -> float:
+    """d/dv 0 = 0."""
+    return 0.0
+
+
 def relu_grad_E_sigma_sigma(C: np.ndarray) -> np.ndarray:
     r"""Gradient of E[ReLU(z_k)ReLU(z_l)] w.r.t. C = [[v_k, c], [c, v_l]].
 
@@ -274,6 +324,12 @@ ACTIVATION_DERIVS = {
     "identity": (identity_dE_sigma_prime_dv, identity_grad_E_sigma_sigma),
 }
 
+ACTIVATION_DOUBLE_PRIME = {
+    "relu": (relu_E_sigma_double_prime, relu_dE_sigma_double_prime_dv),
+    "sigmoid": (sigmoid_E_sigma_double_prime, sigmoid_dE_sigma_double_prime_dv),
+    "identity": (identity_E_sigma_double_prime, identity_dE_sigma_double_prime_dv),
+}
+
 
 def get_activation(name: str):
     """Return (E_sigma, E_sigma_prime, E_sigma_sigma) for the named activation."""
@@ -295,3 +351,17 @@ def get_activation_derivs(name: str):
     if name not in ACTIVATION_DERIVS:
         raise ValueError(f"Unknown activation: {name!r}. Choose from {list(ACTIVATION_DERIVS)}")
     return ACTIVATION_DERIVS[name]
+
+
+def get_activation_double_prime(name: str):
+    """Return (E_sigma_double_prime, dE_sigma_double_prime_dv) for the named activation.
+
+    E_sigma_double_prime(v) -> float:
+        E[sigma''(z)] for z ~ N(0, v).
+
+    dE_sigma_double_prime_dv(v) -> float:
+        Derivative of E[sigma''(z)] w.r.t. projection variance v.
+    """
+    if name not in ACTIVATION_DOUBLE_PRIME:
+        raise ValueError(f"Unknown activation: {name!r}. Choose from {list(ACTIVATION_DOUBLE_PRIME)}")
+    return ACTIVATION_DOUBLE_PRIME[name]

@@ -3,12 +3,14 @@ Simulation study for Step 3 of the research plan.
 
 Generates Binomial(2, p) genotype data with realistic allele frequency
 spectra and LD structure, simulates phenotypes with known beta*, and
-compares four methods:
+compares five methods:
 
-    1. Oracle: individual-level NN trained on raw genotype data
+    1. Linear PRS: Sigma^{-1} Sigma_beta (optimal linear from summary stats)
     2. Gaussian NN: summary-stat NN under Gaussian genotype assumption
     3. Edgeworth NN: summary-stat NN with cumulant corrections
-    4. Linear PRS: Sigma^{-1} Sigma_beta (optimal linear from summary stats)
+    4. Interaction NN: summary-stat NN using second-order interaction
+       statistics Gamma_ij = E[x_i x_j y] to break the linearity barrier
+    5. Oracle NN: individual-level NN trained on raw genotype data
 
 Metrics: prediction R^2 on held-out test data, weight recovery accuracy.
 """
@@ -24,6 +26,7 @@ from scipy.stats import norm
 from .cumulants import snp_cumulants
 from .optimizer import train
 from .edgeworth_optimizer import train_edgeworth
+from .interaction_optimizer import train_interaction
 from .utils import (
     generate_ld_matrix,
     linear_prs_weights,
@@ -182,11 +185,14 @@ def compute_summary_stats_from_genotypes(
     maf_hat = col_means / 2.0
     maf_hat = np.clip(maf_hat, 0.01, 0.99)
 
+    Gamma_hat = X_centered.T @ (X_centered * y_train[:, None]) / n
+
     return {
         "Sigma_beta_hat": Sigma_beta_hat,
         "E_y2_hat": E_y2_hat,
         "Sigma": Sigma_ref,
         "maf": maf_hat,
+        "Gamma_hat": Gamma_hat,
     }
 
 
@@ -311,6 +317,8 @@ class SimulationScenario:
     # Method-specific overrides
     sumstat_lr: float = 0.01
     sumstat_max_iters: int = 3000
+    interaction_lr: float = 0.005
+    interaction_max_iters: int = 3000
     oracle_lr: float = 0.01
     oracle_max_iters: int = 5000
     oracle_batch_size: int = 256
@@ -410,11 +418,12 @@ def run_single_rep(
         y_train = X_train @ beta_star + rng.normal(0, sigma_eps, scenario.n_train)
         y_test = X_test @ beta_star + rng.normal(0, sigma_eps, scenario.n_test)
 
-    # 6. Summary statistics
+    # 6. Summary statistics (including interaction tensor)
     stats = compute_summary_stats_from_genotypes(X_train_raw, y_train, Sigma)
     Sigma_beta_hat = stats["Sigma_beta_hat"]
     E_y2_hat = stats["E_y2_hat"]
     maf_hat = stats["maf"]
+    Gamma_hat = stats["Gamma_hat"]
 
     # Compute mean |kappa_3| for this scenario
     cum = snp_cumulants(maf)
@@ -473,7 +482,26 @@ def run_single_rep(
     wc_ew = _weight_cosine_similarity(ew_result.a, ew_result.W, beta_star)
     results.append(ScenarioResult("Edgeworth NN", r2_ew, wc_ew, mean_abs_k3))
 
-    # --- Method 4: Oracle NN ---
+    # --- Method 4: Interaction NN (warm-started from Gaussian solution) ---
+    int_result = train_interaction(
+        Sigma, Sigma_beta_hat, E_y2_hat, Gamma_hat,
+        m=scenario.m,
+        activation=scenario.activation,
+        lr=scenario.interaction_lr,
+        max_iters=scenario.interaction_max_iters,
+        rng=np.random.default_rng(rng.integers(2**32)),
+        grad_clip=0.5,
+        max_backtracks=10,
+        a_init=gauss_result.a,
+        W_init=gauss_result.W,
+    )
+    r2_int = nn_prediction_r2(
+        X_test, y_test, int_result.a, int_result.W, scenario.activation,
+    )
+    wc_int = _weight_cosine_similarity(int_result.a, int_result.W, beta_star)
+    results.append(ScenarioResult("Interaction NN", r2_int, wc_int, mean_abs_k3))
+
+    # --- Method 5: Oracle NN ---
     oracle_a, oracle_W, _ = train_oracle_nn(
         X_train, y_train,
         m=scenario.m,
