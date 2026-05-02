@@ -2,7 +2,8 @@
 
 A neural network training framework that operates entirely on GWAS summary
 statistics, without individual-level genotype data. 
-***In its current state it converges to the optimal linear model.***
+
+***The interaction NN in notebooks/interaction_study.ipynb recovers non-linear signal from modified summary statistics.***
 
 ## Setup
 
