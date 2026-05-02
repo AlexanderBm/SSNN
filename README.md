@@ -1,7 +1,8 @@
 # Summary-Statistics Neural Network (SSNN)
 
 A neural network training framework that operates entirely on GWAS summary
-statistics, without individual-level genotype data. **In its current state it converges to the optimal linear model.**
+statistics, without individual-level genotype data. 
+***In its current state it converges to the optimal linear model.***
 
 ## Setup
 
