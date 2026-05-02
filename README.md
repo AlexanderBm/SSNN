@@ -1,7 +1,8 @@
 # Summary-Statistics Neural Network (SSNN)
 
 A neural network training framework that operates entirely on GWAS summary
-statistics, without individual-level genotype data.
+statistics, without individual-level genotype data. 
+***In its current state it converges to the optimal linear model.***
 
 ## Setup
 
@@ -19,4 +20,3 @@ pytest
 
 - `src/ssnn/` -- core library (activations, Gaussian integrals, population risk, optimizer)
 - `tests/` -- numerical validation of every mathematical claim
-- `plan/` -- research plan (LaTeX)
