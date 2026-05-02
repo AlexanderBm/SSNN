@@ -1,0 +1,58 @@
+# Local assistant context (not shared)
+CLAUDE.md
+
+# LaTeX sources
+*.tex
+
+# LaTeX build outputs
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.fmt
+*.fot
+*.glg
+*.glo
+*.gls
+*.idx
+*.ilg
+*.ind
+*.ist
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.pdf
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
+latexmkrc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+
+# Local IDE / assistant settings
+.claude/
+
+# Presentations, slide screenshots, scratch (not part of the package)
+presentation/
+slides/
+tmp/
