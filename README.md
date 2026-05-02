@@ -19,4 +19,3 @@ pytest
 
 - `src/ssnn/` -- core library (activations, Gaussian integrals, population risk, optimizer)
 - `tests/` -- numerical validation of every mathematical claim
-- `plan/` -- research plan (LaTeX)
