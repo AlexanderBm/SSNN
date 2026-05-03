@@ -16,11 +16,16 @@ with open(RESULTS_PATH) as f:
 METHOD_COLORS = {
     "Linear PRS": "#4C72B0",
     "Gaussian NN": "#DD8452",
-    "Edgeworth NN": "#C44E52",
     "Interaction NN": "#8172B3",
     "Oracle NN": "#937860",
 }
-METHOD_ORDER = ["Linear PRS", "Gaussian NN", "Edgeworth NN", "Interaction NN", "Oracle NN"]
+METHOD_STYLES = {
+    "Linear PRS": {"linestyle": "--", "marker": "^"},
+    "Gaussian NN": {"linestyle": "-", "marker": "o"},
+    "Interaction NN": {"linestyle": "-", "marker": "s"},
+    "Oracle NN": {"linestyle": "-", "marker": "D"},
+}
+METHOD_ORDER = ["Linear PRS", "Gaussian NN", "Interaction NN", "Oracle NN"]
 
 plt.rcParams.update({
     "figure.figsize": (10, 6),
@@ -89,8 +94,10 @@ for method in METHOD_ORDER:
         method_means.append(np.mean(vals))
         method_ses.append(np.std(vals) / np.sqrt(len(vals)))
 
+    style = METHOD_STYLES[method]
     ax.errorbar(nonlinear_fracs, method_means, yerr=method_ses,
-                marker="o", markersize=7, linewidth=2.2, capsize=4,
+                marker=style["marker"], linestyle=style["linestyle"],
+                markersize=7, linewidth=2.2, capsize=4,
                 label=method, color=METHOD_COLORS[method])
 
 ax.set_xlabel("Nonlinear Fraction (Var(NL) / Var(L))")
@@ -123,8 +130,10 @@ for method in METHOD_ORDER:
         method_means.append(np.mean(vals))
         method_ses.append(np.std(vals) / np.sqrt(len(vals)))
 
+    style = METHOD_STYLES[method]
     ax.errorbar(n_trains, method_means, yerr=method_ses,
-                marker="s", markersize=7, linewidth=2.2, capsize=4,
+                marker=style["marker"], linestyle=style["linestyle"],
+                markersize=7, linewidth=2.2, capsize=4,
                 label=method, color=METHOD_COLORS[method])
 
 ax.set_xlabel("Training Sample Size (n)")
@@ -148,8 +157,14 @@ plt.close(fig)
 # =====================================================================
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
 
+FIG4_METHODS = [
+    ("Linear PRS", METHOD_COLORS["Linear PRS"], "--", "^"),
+    ("Gaussian NN", METHOD_COLORS["Gaussian NN"], "-", "o"),
+    ("Interaction NN", METHOD_COLORS["Interaction NN"], "-", "s"),
+]
+
 # Left panel: absolute R² gap to Oracle
-for method in ["Linear PRS", "Gaussian NN", "Interaction NN"]:
+for method, color, ls, mkr in FIG4_METHODS:
     gaps = []
     gap_ses = []
     for nf in nonlinear_fracs:
@@ -160,8 +175,8 @@ for method in ["Linear PRS", "Gaussian NN", "Interaction NN"]:
         gap_ses.append(np.std(per_rep_gaps) / np.sqrt(len(per_rep_gaps)))
 
     ax1.errorbar(nonlinear_fracs, gaps, yerr=gap_ses,
-                 marker="o", markersize=7, linewidth=2.2, capsize=4,
-                 label=method, color=METHOD_COLORS[method])
+                 marker=mkr, linestyle=ls, markersize=7, linewidth=2.2, capsize=4,
+                 label=method, color=color)
 
 ax1.set_xlabel("Nonlinear Fraction")
 ax1.set_ylabel("R² Gap to Oracle")
@@ -171,7 +186,7 @@ ax1.legend(framealpha=0.9)
 ax1.grid(alpha=0.3)
 
 # Right panel: fraction of Oracle R² captured
-for method in ["Linear PRS", "Gaussian NN", "Interaction NN"]:
+for method, color, ls, mkr in FIG4_METHODS:
     fractions = []
     for nf in nonlinear_fracs:
         oracle_mean = np.mean([r["r2"] for r in nf_data[str(nf)] if r["method"] == "Oracle NN"])
@@ -179,8 +194,8 @@ for method in ["Linear PRS", "Gaussian NN", "Interaction NN"]:
         fractions.append(method_mean / oracle_mean * 100 if oracle_mean > 0 else 0)
 
     ax2.plot(nonlinear_fracs, fractions,
-             marker="o", markersize=7, linewidth=2.2,
-             label=method, color=METHOD_COLORS[method])
+             marker=mkr, linestyle=ls, markersize=7, linewidth=2.2,
+             label=method, color=color)
 
 ax2.set_xlabel("Nonlinear Fraction")
 ax2.set_ylabel("% of Oracle R² Captured")
