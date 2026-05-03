@@ -3,7 +3,7 @@
 A neural network training framework that operates entirely on GWAS summary
 statistics, without individual-level genotype data. 
 
-***The interaction NN in notebooks/interaction_study.ipynb recovers non-linear signal from modified summary statistics.***
+***`notebooks/figures/` shows most recent results with interaction NN learning real non-linear signal.***
 
 ## Setup
 
@@ -21,3 +21,4 @@ pytest
 
 - `src/ssnn/` -- core library (activations, Gaussian integrals, population risk, optimizer)
 - `tests/` -- numerical validation of every mathematical claim
+- `notebooks/` -- simulation and results
