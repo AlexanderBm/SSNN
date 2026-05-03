@@ -9,7 +9,15 @@ second-order summary statistic Gamma_ij = E[x_i x_j y].
 The extended cross-moment is:
     E[y sigma(w_k^T x)] = s_k E[sigma'(z_k)] + q_k E[sigma''(z_k)]
 
-where q_k = w_k^T Gamma w_k.  The E[f(x)^2] term is unchanged.
+where q_k = w_k^T Gamma w_k.
+
+The E[f(x)^2] term uses the arc-cosine kernel formula, which requires
+the covariance of projections w^T x.  When genotypes are binomial
+(not Gaussian), the LD matrix Sigma (from the Gaussian latent model)
+overestimates projection variances by ~2.5x, causing ~100% E[f^2]
+bias.  An optional ``Cov_ref`` parameter allows using the empirical
+covariance from a reference panel for the E[f^2] term, while keeping
+Sigma for the Stein-based E[y*f] term where it is appropriate.
 
 For identity activation, E[sigma''(z)] = 0, so the interaction term
 vanishes and L_int = L_gauss, preserving the linear baseline.
@@ -40,6 +48,7 @@ def compute_interaction_loss(
     E_y2: float,
     Gamma: np.ndarray,
     activation: str = "relu",
+    Cov_ref: np.ndarray | None = None,
 ) -> float:
     """Compute the interaction-extended population risk.
 
@@ -51,16 +60,20 @@ def compute_interaction_loss(
     Args:
         a: (m,) second-layer weights.
         W: (m, p) first-layer weight matrix.
-        Sigma: (p, p) LD covariance matrix.
+        Sigma: (p, p) LD covariance matrix (used for Stein/interaction terms).
         Sigma_beta: (p,) = E[x y], marginal associations.
         E_y2: scalar E[y^2].
         Gamma: (p, p) interaction tensor E[x_i x_j y].
         activation: activation function name.
+        Cov_ref: (p, p) empirical covariance from a reference panel.
+            When provided, used for the E[f^2] arc-cosine kernel instead
+            of Sigma, correcting the ~100% bias on binomial data.
 
     Returns:
         Scalar population risk.
     """
     m = len(a)
+    Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
 
     E_y_f = 0.0
     for k in range(m):
@@ -72,7 +85,7 @@ def compute_interaction_loss(
     E_f2 = 0.0
     for k in range(m):
         for l in range(m):
-            E_f2 += a[k] * a[l] * activation_cross_moment(Sigma, W[k], W[l], activation)
+            E_f2 += a[k] * a[l] * activation_cross_moment(Sigma_f2, W[k], W[l], activation)
 
     return E_y2 - 2.0 * E_y_f + E_f2
 
@@ -84,13 +97,18 @@ def compute_interaction_grad_a(
     Sigma_beta: np.ndarray,
     Gamma: np.ndarray,
     activation: str = "relu",
+    Cov_ref: np.ndarray | None = None,
 ) -> np.ndarray:
     """Gradient of L_int w.r.t. second-layer weights a.
 
     dL/da_k = -2 [E_stein[y sigma_k] + E_int[y sigma_k]]
               + 2 sum_l a_l E[sigma_k sigma_l]
+
+    When Cov_ref is provided, the E[sigma_k sigma_l] terms use
+    Cov_ref for projection covariances instead of Sigma.
     """
     m = len(a)
+    Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
     grad = np.zeros(m)
 
     for k in range(m):
@@ -101,7 +119,7 @@ def compute_interaction_grad_a(
 
         E_f_sigma_k = 0.0
         for l in range(m):
-            E_f_sigma_k += a[l] * activation_cross_moment(Sigma, W[l], W[k], activation)
+            E_f_sigma_k += a[l] * activation_cross_moment(Sigma_f2, W[l], W[k], activation)
 
         grad[k] = -2.0 * E_y_sigma_k + 2.0 * E_f_sigma_k
 
@@ -115,22 +133,32 @@ def compute_interaction_grad_W(
     Sigma_beta: np.ndarray,
     Gamma: np.ndarray,
     activation: str = "relu",
+    Cov_ref: np.ndarray | None = None,
 ) -> np.ndarray:
     r"""Gradient of L_int w.r.t. first-layer weights W.
 
     dL/dw_k = -2 a_k d/dw_k [s_k E[sigma'(z_k)] + q_k E[sigma''(z_k)]]
               + 2 sum_l a_k a_l d/dw_k E[sigma_k sigma_l]
 
-    The Stein gradient is the same as in the Gaussian case.  The
-    interaction gradient adds d/dw_k [q_k E[sigma''(z_k)]].
+    The Stein gradient uses Sigma (appropriate for Stein's lemma).
+    The interaction gradient uses Sigma for projection variance v_k.
+    The cross-term gradient uses Cov_ref (if provided) for the E[f^2]
+    arc-cosine kernel, since Cov_ref gives the true projection
+    covariances on binomial data.
+
+    The chain rule for the cross term goes through C_kl:
+        dv_k/dw_{k,j} = 2 (Cov_ref @ w_k)_j
+        dc_{kl}/dw_{k,j} = (Cov_ref @ w_l)_j
     """
     _, E_sigma_prime_fn, _ = get_activation(activation)
     dE_sp_dv, grad_E_ss = get_activation_derivs(activation)
 
     m, p = W.shape
+    Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
     grad_W = np.zeros_like(W)
 
-    Sw = Sigma @ W.T  # (p, m)
+    Sw = Sigma @ W.T      # (p, m) — for Stein/interaction terms
+    Cw = Sigma_f2 @ W.T   # (p, m) — for E[f^2] cross terms
 
     for k in range(m):
         Sw_k = Sw[:, k]
@@ -140,23 +168,24 @@ def compute_interaction_grad_W(
         E_sp = E_sigma_prime_fn(v_k)
         dEsp_dv = dE_sp_dv(v_k)
 
-        # Stein gradient (same as population_risk.compute_grad_W)
+        # Stein gradient (uses Sigma — appropriate for Stein's lemma)
         stein_grad = -2.0 * a[k] * (
             Sigma_beta * E_sp + s_k * dEsp_dv * 2.0 * Sw_k
         )
 
-        # Interaction gradient: -2 a_k d/dw_k [q_k E[sigma''(z_k)]]
+        # Interaction gradient (uses Sigma for v_k)
         int_grad = -2.0 * a[k] * interaction_cross_moment_grad(
             Sigma, Gamma, W[k], activation,
         )
 
-        # Cross terms: d/dw_k E[sigma_k sigma_l] (same as Gaussian)
+        # Cross terms: d/dw_k E[sigma_k sigma_l] using Cov_ref
+        Cw_k = Cw[:, k]
         cross_grad = np.zeros(p)
         for l in range(m):
-            Sw_l = Sw[:, l]
-            C_kl = pairwise_covariance(Sigma, W[k], W[l])
+            Cw_l = Cw[:, l]
+            C_kl = pairwise_covariance(Sigma_f2, W[k], W[l])
             dF = grad_E_ss(C_kl)
-            d_Ess = dF[0, 0] * 2.0 * Sw_k + dF[0, 1] * Sw_l
+            d_Ess = dF[0, 0] * 2.0 * Cw_k + dF[0, 1] * Cw_l
             cross_grad += 2.0 * a[k] * a[l] * d_Ess
 
         grad_W[k] = stein_grad + int_grad + cross_grad
@@ -172,12 +201,17 @@ def compute_interaction_gradients(
     E_y2: float,
     Gamma: np.ndarray,
     activation: str = "relu",
+    Cov_ref: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute both gradients (dL/da, dL/dW) for the interaction loss.
+
+    Args:
+        Cov_ref: (p, p) empirical covariance for E[f^2] correction.
+            Passed through to both gradient functions.
 
     Returns:
         (grad_a, grad_W) -- shapes (m,) and (m, p).
     """
-    grad_a = compute_interaction_grad_a(a, W, Sigma, Sigma_beta, Gamma, activation)
-    grad_W = compute_interaction_grad_W(a, W, Sigma, Sigma_beta, Gamma, activation)
+    grad_a = compute_interaction_grad_a(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref)
+    grad_W = compute_interaction_grad_W(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref)
     return grad_a, grad_W

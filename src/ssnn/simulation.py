@@ -187,12 +187,15 @@ def compute_summary_stats_from_genotypes(
 
     Gamma_hat = X_centered.T @ (X_centered * y_train[:, None]) / n
 
+    Cov_ref = X_centered.T @ X_centered / n
+
     return {
         "Sigma_beta_hat": Sigma_beta_hat,
         "E_y2_hat": E_y2_hat,
         "Sigma": Sigma_ref,
         "maf": maf_hat,
         "Gamma_hat": Gamma_hat,
+        "Cov_ref": Cov_ref,
     }
 
 
@@ -424,6 +427,7 @@ def run_single_rep(
     E_y2_hat = stats["E_y2_hat"]
     maf_hat = stats["maf"]
     Gamma_hat = stats["Gamma_hat"]
+    Cov_ref = stats["Cov_ref"]
 
     # Compute mean |kappa_3| for this scenario
     cum = snp_cumulants(maf)
@@ -494,6 +498,7 @@ def run_single_rep(
         max_backtracks=10,
         a_init=gauss_result.a,
         W_init=gauss_result.W,
+        Cov_ref=Cov_ref,
     )
     r2_int = nn_prediction_r2(
         X_test, y_test, int_result.a, int_result.W, scenario.activation,

@@ -35,6 +35,7 @@ def train_interaction(
     max_backtracks: int = 5,
     a_init: np.ndarray | None = None,
     W_init: np.ndarray | None = None,
+    Cov_ref: np.ndarray | None = None,
 ) -> TrainResult:
     """Train a 1-hidden-layer NN on interaction-extended summary statistics.
 
@@ -55,6 +56,9 @@ def train_interaction(
         max_backtracks: Maximum backtracking steps per iteration.
         a_init: Optional initial second-layer weights (warm start).
         W_init: Optional initial first-layer weights (warm start).
+        Cov_ref: (p, p) empirical covariance from a reference panel.
+            When provided, corrects the E[f^2] term by using the true
+            projection covariances instead of the Gaussian-latent Sigma.
 
     Returns:
         TrainResult with optimized (a, W) and loss history.
@@ -75,7 +79,9 @@ def train_interaction(
     converged = False
 
     for i in range(max_iters):
-        loss = compute_interaction_loss(a, W, Sigma, Sigma_beta, E_y2, Gamma, activation)
+        loss = compute_interaction_loss(
+            a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+        )
         loss_history.append(loss)
 
         if verbose and i % 500 == 0:
@@ -88,7 +94,7 @@ def train_interaction(
                 break
 
         grad_a, grad_W = compute_interaction_gradients(
-            a, W, Sigma, Sigma_beta, E_y2, Gamma, activation,
+            a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
         )
 
         combined_norm = np.sqrt(np.sum(grad_a**2) + np.sum(grad_W**2))
@@ -102,7 +108,7 @@ def train_interaction(
             a_new = a - step_lr * grad_a
             W_new = W - step_lr * grad_W
             new_loss = compute_interaction_loss(
-                a_new, W_new, Sigma, Sigma_beta, E_y2, Gamma, activation,
+                a_new, W_new, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
             )
             if new_loss <= loss + 1e-10:
                 break
@@ -115,7 +121,9 @@ def train_interaction(
         W = W_new
 
     if not converged:
-        loss = compute_interaction_loss(a, W, Sigma, Sigma_beta, E_y2, Gamma, activation)
+        loss = compute_interaction_loss(
+            a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+        )
         loss_history.append(loss)
 
     return TrainResult(
