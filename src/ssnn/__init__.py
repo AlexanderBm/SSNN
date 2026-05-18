@@ -33,6 +33,14 @@ from .edgeworth_risk import (
 )
 from .edgeworth_optimizer import train_edgeworth
 
+# Residualized summary statistics for genome-wide training
+from .residual_gamma import (
+    compute_gamma_correction,
+    compute_residual_gamma,
+    compute_residual_sigma_beta,
+    compute_residual_e_y2,
+)
+
 # Interaction-SSNN framework (barrier-breaking)
 from .activations import get_activation_double_prime
 from .interaction_integrals import (

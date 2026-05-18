@@ -190,7 +190,7 @@ class TestComputeSummaryStats:
         y = rng.standard_normal(n)
         Sigma_ref = np.eye(p)
         stats = compute_summary_stats_from_genotypes(X, y, Sigma_ref)
-        assert set(stats.keys()) == {"Sigma_beta_hat", "E_y2_hat", "Sigma", "maf"}
+        assert set(stats.keys()) == {"Sigma_beta_hat", "E_y2_hat", "Sigma", "maf", "Gamma_hat", "Cov_ref"}
 
     def test_sigma_beta_hat_shape(self):
         rng = np.random.default_rng(31)
