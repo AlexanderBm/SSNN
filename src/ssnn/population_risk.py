@@ -72,10 +72,12 @@ def compute_loss(
     Sigma_beta: np.ndarray,
     E_y2: float,
     activation: str = "relu",
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> float:
     """Compute the population risk L(a, W) = E[(y - f(x))^2].
 
-    = E[y^2] - 2 E[y f(x)] + E[f(x)^2]
+    = E[y^2] - 2 E[y f(x)] + E[f(x)^2] + reg_a*||a||^2 + reg_W*||W||_F^2
 
     All terms are computed from summary statistics only.
 
@@ -86,13 +88,20 @@ def compute_loss(
         Sigma_beta: (p,) = Sigma @ beta*, from GWAS marginal associations.
         E_y2: scalar E[y^2] = beta*^T Sigma beta* + sigma_eps^2.
         activation: name of activation function.
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
-        Scalar population risk.
+        Scalar population risk (with optional regularization).
     """
     E_y_f = _compute_E_y_f(a, W, Sigma, Sigma_beta, activation)
     E_f2 = _compute_E_f_squared(a, W, Sigma, activation)
-    return E_y2 - 2.0 * E_y_f + E_f2
+    loss = E_y2 - 2.0 * E_y_f + E_f2
+    if reg_a > 0:
+        loss += reg_a * np.sum(a ** 2)
+    if reg_W > 0:
+        loss += reg_W * np.sum(W ** 2)
+    return loss
 
 
 # ---------------------------------------------------------------------------
@@ -140,10 +149,12 @@ def compute_grad_a(
     Sigma: np.ndarray,
     Sigma_beta: np.ndarray,
     activation: str = "relu",
+    reg_a: float = 0.0,
 ) -> np.ndarray:
     """Gradient of L w.r.t. second-layer weights a.
 
     dL/da_k = -2 E[y sigma(w_k^T x)] + 2 sum_l a_l E[sigma(w_k^T x) sigma(w_l^T x)]
+              + 2 * reg_a * a_k
 
     This follows from expanding E[(y - f(x)) sigma(w_k^T x)].
     """
@@ -159,6 +170,9 @@ def compute_grad_a(
 
         grad[k] = -2.0 * E_y_sigma_k + 2.0 * E_f_sigma_k
 
+    if reg_a > 0:
+        grad += 2.0 * reg_a * a
+
     return grad
 
 
@@ -168,6 +182,7 @@ def compute_grad_W(
     Sigma: np.ndarray,
     Sigma_beta: np.ndarray,
     activation: str = "relu",
+    reg_W: float = 0.0,
 ) -> np.ndarray:
     r"""Analytic gradient of L w.r.t. first-layer weights W.
 
@@ -175,11 +190,13 @@ def compute_grad_W(
 
         L = E[y^2] - 2 sum_k a_k E[y sigma_k]
             + sum_{k,l} a_k a_l E[sigma_k sigma_l]
+            + reg_W * ||W||_F^2
 
     Only terms involving w_k contribute to dL/dw_k:
 
         dL/dw_{k,j} = -2 a_k d/dw_{k,j} E[y sigma_k]
                      + 2 sum_l a_k a_l d/dw_{k,j} E[sigma_k sigma_l]
+                     + 2 * reg_W * w_{k,j}
 
     (the factor 2 in the cross-term comes from combining the (k,l) and
     (l,k) contributions, using symmetry of E[sigma_k sigma_l].)
@@ -228,6 +245,9 @@ def compute_grad_W(
 
         grad_W[k] = stein_grad + cross_grad
 
+    if reg_W > 0:
+        grad_W += 2.0 * reg_W * W
+
     return grad_W
 
 
@@ -238,12 +258,18 @@ def compute_gradients(
     Sigma_beta: np.ndarray,
     E_y2: float,
     activation: str = "relu",
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute both gradients (dL/da, dL/dW) in a single call.
+
+    Args:
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
         (grad_a, grad_W) -- shapes (m,) and (m, p).
     """
-    grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation)
-    grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation)
+    grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation, reg_a)
+    grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation, reg_W)
     return grad_a, grad_W

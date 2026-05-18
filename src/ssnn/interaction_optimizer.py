@@ -36,6 +36,8 @@ def train_interaction(
     a_init: np.ndarray | None = None,
     W_init: np.ndarray | None = None,
     Cov_ref: np.ndarray | None = None,
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> TrainResult:
     """Train a 1-hidden-layer NN on interaction-extended summary statistics.
 
@@ -59,6 +61,8 @@ def train_interaction(
         Cov_ref: (p, p) empirical covariance from a reference panel.
             When provided, corrects the E[f^2] term by using the true
             projection covariances instead of the Gaussian-latent Sigma.
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
         TrainResult with optimized (a, W) and loss history.
@@ -81,6 +85,7 @@ def train_interaction(
     for i in range(max_iters):
         loss = compute_interaction_loss(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+            reg_a, reg_W,
         )
         loss_history.append(loss)
 
@@ -95,6 +100,7 @@ def train_interaction(
 
         grad_a, grad_W = compute_interaction_gradients(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+            reg_a, reg_W,
         )
 
         combined_norm = np.sqrt(np.sum(grad_a**2) + np.sum(grad_W**2))
@@ -109,6 +115,7 @@ def train_interaction(
             W_new = W - step_lr * grad_W
             new_loss = compute_interaction_loss(
                 a_new, W_new, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+                reg_a, reg_W,
             )
             if new_loss <= loss + 1e-10:
                 break
@@ -123,6 +130,7 @@ def train_interaction(
     if not converged:
         loss = compute_interaction_loss(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+            reg_a, reg_W,
         )
         loss_history.append(loss)
 

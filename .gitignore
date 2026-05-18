@@ -56,3 +56,9 @@ venv/
 presentation/
 slides/
 tmp/
+
+# Research artifacts (notebooks, scripts, plans — not part of the package)
+notebooks/
+scripts/
+plan/
+walkthrough/

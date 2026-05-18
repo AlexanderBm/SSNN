@@ -605,6 +605,56 @@ class TestInteractionGradients:
         )
         np.testing.assert_allclose(grad_int, grad_gauss, atol=1e-12)
 
+    @pytest.mark.parametrize("reg_a,reg_W", [(0.1, 0.0), (0.0, 0.1), (0.05, 0.05)])
+    def test_regularized_grad_a_finite_diff(self, interaction_problem, reg_a, reg_W):
+        """Finite-difference check for regularized loss w.r.t. a."""
+        prob = interaction_problem
+        a, W = prob["a"].copy(), prob["W"]
+        Sigma, Sb, E_y2, Gamma = (
+            prob["Sigma"], prob["Sigma_beta"], prob["E_y2"], prob["Gamma"],
+        )
+
+        grad_a = compute_interaction_grad_a(
+            a, W, Sigma, Sb, Gamma, "relu", reg_a=reg_a,
+        )
+
+        eps = 1e-5
+        for k in range(len(a)):
+            a_plus = a.copy(); a_plus[k] += eps
+            a_minus = a.copy(); a_minus[k] -= eps
+            fd = (
+                compute_interaction_loss(a_plus, W, Sigma, Sb, E_y2, Gamma, "relu", reg_a=reg_a, reg_W=reg_W)
+                - compute_interaction_loss(a_minus, W, Sigma, Sb, E_y2, Gamma, "relu", reg_a=reg_a, reg_W=reg_W)
+            ) / (2 * eps)
+            assert grad_a[k] == pytest.approx(fd, rel=1e-3, abs=1e-7)
+
+    @pytest.mark.parametrize("reg_a,reg_W", [(0.1, 0.0), (0.0, 0.1), (0.05, 0.05)])
+    def test_regularized_grad_W_finite_diff(self, interaction_problem, reg_a, reg_W):
+        """Finite-difference check for regularized loss w.r.t. W."""
+        prob = interaction_problem
+        a, W = prob["a"], prob["W"].copy()
+        Sigma, Sb, E_y2, Gamma = (
+            prob["Sigma"], prob["Sigma_beta"], prob["E_y2"], prob["Gamma"],
+        )
+
+        grad_W = compute_interaction_grad_W(
+            a, W, Sigma, Sb, Gamma, "relu", reg_W=reg_W,
+        )
+
+        eps = 1e-5
+        m, p = W.shape
+        for k in range(m):
+            for j in range(p):
+                W_plus = W.copy(); W_plus[k, j] += eps
+                W_minus = W.copy(); W_minus[k, j] -= eps
+                fd = (
+                    compute_interaction_loss(a, W_plus, Sigma, Sb, E_y2, Gamma, "relu", reg_a=reg_a, reg_W=reg_W)
+                    - compute_interaction_loss(a, W_minus, Sigma, Sb, E_y2, Gamma, "relu", reg_a=reg_a, reg_W=reg_W)
+                ) / (2 * eps)
+                assert grad_W[k, j] == pytest.approx(fd, rel=1e-3, abs=1e-7), (
+                    f"Mismatch at ({k},{j}) for reg_a={reg_a}, reg_W={reg_W}"
+                )
+
 
 # ===================================================================
 # 7. Optimizer train_interaction
@@ -959,3 +1009,48 @@ class TestNumericalStability:
 
         grad = interaction_cross_moment_grad(Sigma, Gamma, w_k, "relu")
         assert np.all(np.isfinite(grad))
+
+
+# ===================================================================
+# 10. Regularized Gaussian NN gradient checks
+# ===================================================================
+
+class TestGaussianRegularizedGradients:
+
+    @pytest.mark.parametrize("reg_a,reg_W", [(0.1, 0.0), (0.0, 0.1), (0.05, 0.05)])
+    def test_regularized_grad_a_finite_diff(self, interaction_problem, reg_a, reg_W):
+        prob = interaction_problem
+        a, W = prob["a"].copy(), prob["W"]
+        Sigma, Sb, E_y2 = prob["Sigma"], prob["Sigma_beta"], prob["E_y2"]
+
+        grad_a = compute_grad_a(a, W, Sigma, Sb, "relu", reg_a=reg_a)
+
+        eps = 1e-5
+        for k in range(len(a)):
+            a_plus = a.copy(); a_plus[k] += eps
+            a_minus = a.copy(); a_minus[k] -= eps
+            fd = (
+                compute_loss(a_plus, W, Sigma, Sb, E_y2, "relu", reg_a=reg_a, reg_W=reg_W)
+                - compute_loss(a_minus, W, Sigma, Sb, E_y2, "relu", reg_a=reg_a, reg_W=reg_W)
+            ) / (2 * eps)
+            assert grad_a[k] == pytest.approx(fd, rel=1e-3, abs=1e-7)
+
+    @pytest.mark.parametrize("reg_a,reg_W", [(0.1, 0.0), (0.0, 0.1), (0.05, 0.05)])
+    def test_regularized_grad_W_finite_diff(self, interaction_problem, reg_a, reg_W):
+        prob = interaction_problem
+        a, W = prob["a"], prob["W"].copy()
+        Sigma, Sb, E_y2 = prob["Sigma"], prob["Sigma_beta"], prob["E_y2"]
+
+        grad_W = compute_grad_W(a, W, Sigma, Sb, "relu", reg_W=reg_W)
+
+        eps = 1e-5
+        m, p = W.shape
+        for k in range(m):
+            for j in range(min(p, 5)):
+                W_plus = W.copy(); W_plus[k, j] += eps
+                W_minus = W.copy(); W_minus[k, j] -= eps
+                fd = (
+                    compute_loss(a, W_plus, Sigma, Sb, E_y2, "relu", reg_a=reg_a, reg_W=reg_W)
+                    - compute_loss(a, W_minus, Sigma, Sb, E_y2, "relu", reg_a=reg_a, reg_W=reg_W)
+                ) / (2 * eps)
+                assert grad_W[k, j] == pytest.approx(fd, rel=1e-3, abs=1e-7)

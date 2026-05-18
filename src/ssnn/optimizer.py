@@ -37,6 +37,8 @@ def train(
     init_scale: float = 0.01,
     rng: np.random.Generator | None = None,
     verbose: bool = False,
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> TrainResult:
     """Train a 1-hidden-layer NN on summary statistics via gradient descent.
 
@@ -52,6 +54,8 @@ def train(
         init_scale: Scale for random weight initialization.
         rng: Random generator for initialization.
         verbose: Print progress every 500 iterations.
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
         TrainResult with optimized (a, W) and loss history.
@@ -67,7 +71,7 @@ def train(
     converged = False
 
     for i in range(max_iters):
-        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation)
+        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W)
         loss_history.append(loss)
 
         if verbose and i % 500 == 0:
@@ -79,14 +83,14 @@ def train(
                 converged = True
                 break
 
-        grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation)
-        grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation)
+        grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation, reg_a)
+        grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation, reg_W)
 
         a = a - lr * grad_a
         W = W - lr * grad_W
 
     if not converged:
-        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation)
+        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W)
         loss_history.append(loss)
 
     return TrainResult(

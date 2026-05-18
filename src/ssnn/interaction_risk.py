@@ -49,10 +49,12 @@ def compute_interaction_loss(
     Gamma: np.ndarray,
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> float:
     """Compute the interaction-extended population risk.
 
-    L_int = E[y^2] - 2 E_int[y f(x)] + E[f(x)^2]
+    L_int = E[y^2] - 2 E_int[y f(x)] + E[f(x)^2] + reg_a*||a||^2 + reg_W*||W||_F^2
 
     where E_int[y f(x)] includes both the Stein (first-order) and
     interaction (second-order) cross-moment terms.
@@ -68,9 +70,11 @@ def compute_interaction_loss(
         Cov_ref: (p, p) empirical covariance from a reference panel.
             When provided, used for the E[f^2] arc-cosine kernel instead
             of Sigma, correcting the ~100% bias on binomial data.
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
-        Scalar population risk.
+        Scalar population risk (with optional regularization).
     """
     m = len(a)
     Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
@@ -87,7 +91,12 @@ def compute_interaction_loss(
         for l in range(m):
             E_f2 += a[k] * a[l] * activation_cross_moment(Sigma_f2, W[k], W[l], activation)
 
-    return E_y2 - 2.0 * E_y_f + E_f2
+    loss = E_y2 - 2.0 * E_y_f + E_f2
+    if reg_a > 0:
+        loss += reg_a * np.sum(a ** 2)
+    if reg_W > 0:
+        loss += reg_W * np.sum(W ** 2)
+    return loss
 
 
 def compute_interaction_grad_a(
@@ -98,11 +107,13 @@ def compute_interaction_grad_a(
     Gamma: np.ndarray,
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
+    reg_a: float = 0.0,
 ) -> np.ndarray:
     """Gradient of L_int w.r.t. second-layer weights a.
 
     dL/da_k = -2 [E_stein[y sigma_k] + E_int[y sigma_k]]
               + 2 sum_l a_l E[sigma_k sigma_l]
+              + 2 * reg_a * a_k
 
     When Cov_ref is provided, the E[sigma_k sigma_l] terms use
     Cov_ref for projection covariances instead of Sigma.
@@ -123,6 +134,9 @@ def compute_interaction_grad_a(
 
         grad[k] = -2.0 * E_y_sigma_k + 2.0 * E_f_sigma_k
 
+    if reg_a > 0:
+        grad += 2.0 * reg_a * a
+
     return grad
 
 
@@ -134,11 +148,13 @@ def compute_interaction_grad_W(
     Gamma: np.ndarray,
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
+    reg_W: float = 0.0,
 ) -> np.ndarray:
     r"""Gradient of L_int w.r.t. first-layer weights W.
 
     dL/dw_k = -2 a_k d/dw_k [s_k E[sigma'(z_k)] + q_k E[sigma''(z_k)]]
               + 2 sum_l a_k a_l d/dw_k E[sigma_k sigma_l]
+              + 2 * reg_W * w_k
 
     The Stein gradient uses Sigma (appropriate for Stein's lemma).
     The interaction gradient uses Sigma for projection variance v_k.
@@ -190,6 +206,9 @@ def compute_interaction_grad_W(
 
         grad_W[k] = stein_grad + int_grad + cross_grad
 
+    if reg_W > 0:
+        grad_W += 2.0 * reg_W * W
+
     return grad_W
 
 
@@ -202,16 +221,20 @@ def compute_interaction_gradients(
     Gamma: np.ndarray,
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
+    reg_a: float = 0.0,
+    reg_W: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute both gradients (dL/da, dL/dW) for the interaction loss.
 
     Args:
         Cov_ref: (p, p) empirical covariance for E[f^2] correction.
             Passed through to both gradient functions.
+        reg_a: L2 regularization strength for second-layer weights.
+        reg_W: L2 regularization strength for first-layer weights.
 
     Returns:
         (grad_a, grad_W) -- shapes (m,) and (m, p).
     """
-    grad_a = compute_interaction_grad_a(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref)
-    grad_W = compute_interaction_grad_W(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref)
+    grad_a = compute_interaction_grad_a(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_a)
+    grad_W = compute_interaction_grad_W(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_W)
     return grad_a, grad_W
