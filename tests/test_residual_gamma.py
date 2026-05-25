@@ -20,6 +20,8 @@ from ssnn.residual_gamma import (
     compute_residual_gamma,
     compute_residual_sigma_beta,
     compute_residual_e_y2,
+    compute_genome_wide_residual_gamma,
+    compute_residual_sigma_other2,
 )
 
 
@@ -796,3 +798,181 @@ class TestEdgeCases:
         resid = compute_residual_sigma_beta(Sigma_beta_zero, Sigma, beta_hat)
         expected = -(Sigma @ beta_hat)
         np.testing.assert_allclose(resid, expected, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# 6. compute_genome_wide_residual_gamma
+# ---------------------------------------------------------------------------
+
+class TestGenomeWideResidualGamma:
+
+    @pytest.fixture
+    def multiblock_linear(self):
+        """B=5 blocks, pure linear phenotype — no epistasis."""
+        rng = np.random.default_rng(77)
+        B, p, n = 5, 10, 5000
+        betas = [rng.standard_normal(p) * 0.3 for _ in range(B)]
+        X_blocks = [rng.standard_normal((n, p)) for _ in range(B)]
+        beta_hats = [betas[b] + rng.standard_normal(p) * 0.01 for b in range(B)]
+
+        y = sum(X_blocks[b] @ betas[b] for b in range(B))
+        y += rng.standard_normal(n) * np.sqrt(float(np.var(y)))  # h²=0.5
+
+        return {"B": B, "p": p, "n": n, "X_blocks": X_blocks,
+                "y": y, "betas": betas, "beta_hats": beta_hats}
+
+    def test_returns_correct_number_of_blocks(self, multiblock_linear):
+        d = multiblock_linear
+        gammas = compute_genome_wide_residual_gamma(
+            d["X_blocks"], d["y"], d["beta_hats"], d["n"]
+        )
+        assert len(gammas) == d["B"]
+
+    def test_each_block_correct_shape(self, multiblock_linear):
+        d = multiblock_linear
+        gammas = compute_genome_wide_residual_gamma(
+            d["X_blocks"], d["y"], d["beta_hats"], d["n"]
+        )
+        for b, G in enumerate(gammas):
+            assert G.shape == (d["p"], d["p"]), f"Block {b}: expected ({d['p']},{d['p']})"
+
+    def test_each_block_symmetric(self, multiblock_linear):
+        d = multiblock_linear
+        gammas = compute_genome_wide_residual_gamma(
+            d["X_blocks"], d["y"], d["beta_hats"], d["n"]
+        )
+        for b, G in enumerate(gammas):
+            np.testing.assert_allclose(G, G.T, atol=1e-12, err_msg=f"Block {b} not symmetric")
+
+    def test_matches_direct_leave_one_out(self, multiblock_linear):
+        """Each Γ_b must equal (1/n) X_b^T diag(r_b) X_b computed directly."""
+        d = multiblock_linear
+        B, n = d["B"], d["n"]
+        prs_total = sum(d["X_blocks"][b] @ d["beta_hats"][b] for b in range(B))
+        gammas = compute_genome_wide_residual_gamma(
+            d["X_blocks"], d["y"], d["beta_hats"], n
+        )
+        for b in range(B):
+            r_b = d["y"] - (prs_total - d["X_blocks"][b] @ d["beta_hats"][b])
+            G_direct = d["X_blocks"][b].T @ (d["X_blocks"][b] * r_b[:, None]) / n
+            np.testing.assert_allclose(gammas[b], G_direct, atol=1e-12,
+                                       err_msg=f"Block {b} mismatch")
+
+    def test_reduces_noise_under_null(self, multiblock_linear):
+        """Under pure linear DGP, gw-residual Γ has smaller Frobenius norm than raw Γ."""
+        d = multiblock_linear
+        n = d["n"]
+        gammas_gw = compute_genome_wide_residual_gamma(
+            d["X_blocks"], d["y"], d["beta_hats"], n
+        )
+        for b in range(d["B"]):
+            Gamma_raw_b = d["X_blocks"][b].T @ (d["X_blocks"][b] * d["y"][:, None]) / n
+            norm_raw = np.linalg.norm(Gamma_raw_b, "fro")
+            norm_gw = np.linalg.norm(gammas_gw[b], "fro")
+            assert norm_gw < norm_raw, (
+                f"Block {b}: gw-residual norm ({norm_gw:.4f}) should be < raw ({norm_raw:.4f})"
+            )
+
+    def test_preserves_signal_vs_raw(self):
+        """Under epistasis, top eigenvalue of gw-residual Γ ≥ top eigenvalue of raw Γ."""
+        rng = np.random.default_rng(88)
+        B, p, n = 5, 15, 20000
+
+        betas = [rng.standard_normal(p) * 0.3 for _ in range(B)]
+        X_blocks = [rng.standard_normal((n, p)) for _ in range(B)]
+        beta_hats = betas.copy()
+
+        # Plant epistasis in block 0: y += relu(w_epi^T x_0)
+        w_epi = rng.standard_normal(p) * 0.5
+        y = sum(X_blocks[b] @ betas[b] for b in range(B))
+        nl = np.maximum(0.0, X_blocks[0] @ w_epi)
+        y += nl * np.sqrt(float(np.var(y)) / max(float(np.var(nl)), 1e-15))
+        y += rng.standard_normal(n) * np.sqrt(float(np.var(y)))
+
+        gammas_gw = compute_genome_wide_residual_gamma(X_blocks, y, beta_hats, n)
+
+        Gamma_raw_0 = X_blocks[0].T @ (X_blocks[0] * y[:, None]) / n
+        top_raw = float(np.max(np.abs(np.linalg.eigvalsh(Gamma_raw_0))))
+        top_gw = float(np.max(np.abs(np.linalg.eigvalsh(gammas_gw[0]))))
+
+        # Signal is preserved: gw-residual top eigenvalue should not drop below raw
+        assert top_gw >= top_raw * 0.7, (
+            f"Signal lost: gw top={top_gw:.4f}, raw top={top_raw:.4f}"
+        )
+
+    def test_zero_beta_hats_equals_raw_gamma(self, multiblock_linear):
+        """With all-zero beta_hats, leave-one-out residual r_b = y, so Γ_b = Γ_raw_b."""
+        d = multiblock_linear
+        n = d["n"]
+        zero_betas = [np.zeros(d["p"]) for _ in range(d["B"])]
+        gammas_gw = compute_genome_wide_residual_gamma(d["X_blocks"], d["y"], zero_betas, n)
+        for b in range(d["B"]):
+            Gamma_raw_b = d["X_blocks"][b].T @ (d["X_blocks"][b] * d["y"][:, None]) / n
+            np.testing.assert_allclose(gammas_gw[b], Gamma_raw_b, atol=1e-12,
+                                       err_msg=f"Block {b}: expected equal to raw Gamma")
+
+
+# ---------------------------------------------------------------------------
+# 7. compute_residual_sigma_other2
+# ---------------------------------------------------------------------------
+
+class TestResidualSigmaOther2:
+
+    def test_excludes_target_block(self):
+        """PVE of block_idx should NOT be subtracted from E_y2."""
+        rng = np.random.default_rng(99)
+        B, p = 4, 8
+        sbs = [rng.standard_normal(p) * 0.2 for _ in range(B)]
+        bhs = [rng.standard_normal(p) * 0.2 for _ in range(B)]
+        E_y2 = 2.0
+
+        for b in range(B):
+            result = compute_residual_sigma_other2(E_y2, sbs, bhs, b)
+            pve_other = sum(
+                max(0.0, float(np.dot(sbs[bb], bhs[bb])))
+                for bb in range(B) if bb != b
+            )
+            expected = max(1e-6, E_y2 - pve_other)
+            assert result == pytest.approx(expected, rel=1e-10), f"Failed at block {b}"
+
+    def test_monotone_in_block_idx(self):
+        """Blocks with larger PVE: excluding them yields larger sigma_other2."""
+        rng = np.random.default_rng(100)
+        B, p = 5, 6
+        # Make block 0 have very large PVE, block 4 very small
+        sbs = [np.ones(p) * (0.5 / (b + 1)) for b in range(B)]
+        bhs = [np.ones(p) * (0.5 / (b + 1)) for b in range(B)]
+        E_y2 = 5.0
+        # Excluding block 0 (high PVE) → larger sigma_other2 than excluding block 4 (low PVE)
+        s_excl_0 = compute_residual_sigma_other2(E_y2, sbs, bhs, 0)
+        s_excl_4 = compute_residual_sigma_other2(E_y2, sbs, bhs, 4)
+        assert s_excl_0 > s_excl_4, (
+            f"Excluding high-PVE block should give larger sigma_other2: {s_excl_0:.4f} vs {s_excl_4:.4f}"
+        )
+
+    def test_clamped_to_floor(self):
+        """Result is clamped to ≥ 1e-6 even if PVE_other > E_y2."""
+        E_y2 = 0.1
+        # Very large PVE from other blocks
+        sbs = [np.array([1.0]), np.array([1.0])]
+        bhs = [np.array([1.0]), np.array([1.0])]
+        result = compute_residual_sigma_other2(E_y2, sbs, bhs, block_idx=0)
+        assert result >= 1e-6
+
+    def test_single_block_returns_floor(self):
+        """With B=1, PVE_other=0, sigma_other2 = E_y2."""
+        sbs = [np.array([0.5, 0.3])]
+        bhs = [np.array([0.4, 0.2])]
+        E_y2 = 1.5
+        result = compute_residual_sigma_other2(E_y2, sbs, bhs, block_idx=0)
+        assert result == pytest.approx(E_y2, rel=1e-10)
+
+    def test_all_zero_pve_returns_e_y2(self):
+        """With zero PVE from all other blocks, sigma_other2 = E_y2."""
+        B, p = 4, 5
+        sbs = [np.zeros(p) for _ in range(B)]
+        bhs = [np.zeros(p) for _ in range(B)]
+        E_y2 = 3.0
+        for b in range(B):
+            result = compute_residual_sigma_other2(E_y2, sbs, bhs, b)
+            assert result == pytest.approx(E_y2, rel=1e-10)

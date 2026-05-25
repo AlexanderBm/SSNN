@@ -402,13 +402,13 @@ class TestRunSingleRep:
     def test_returns_four_results(self, small_scenario):
         rng = np.random.default_rng(50)
         results = run_single_rep(small_scenario, rng)
-        assert len(results) == 4
+        assert len(results) == 5
 
     def test_all_methods_represented(self, small_scenario):
         rng = np.random.default_rng(51)
         results = run_single_rep(small_scenario, rng)
         methods = {r.method for r in results}
-        assert methods == {"Linear PRS", "Gaussian NN", "Edgeworth NN", "Oracle NN"}
+        assert methods == {"Linear PRS", "Gaussian NN", "Edgeworth NN", "Interaction NN", "Oracle NN"}
 
     def test_r2_values_finite(self, small_scenario):
         rng = np.random.default_rng(52)
@@ -434,7 +434,7 @@ class TestRunSingleRep:
         )
         rng = np.random.default_rng(54)
         results = run_single_rep(scenario, rng)
-        assert len(results) == 4
+        assert len(results) == 5
         for r in results:
             assert np.isfinite(r.r2)
 
@@ -460,7 +460,7 @@ class TestRunScenario:
     def test_correct_number_of_rows(self, tiny_scenario):
         n_reps = 2
         rows = run_scenario(tiny_scenario, n_reps=n_reps, seed=60)
-        assert len(rows) == 4 * n_reps
+        assert len(rows) == 5 * n_reps
 
     def test_dict_keys(self, tiny_scenario):
         rows = run_scenario(tiny_scenario, n_reps=1, seed=61)

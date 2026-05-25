@@ -38,6 +38,9 @@ def train_interaction(
     Cov_ref: np.ndarray | None = None,
     reg_a: float = 0.0,
     reg_W: float = 0.0,
+    sigma_other2: float | None = None,
+    n_train: int | None = None,
+    validation_data: dict | None = None,
 ) -> TrainResult:
     """Train a 1-hidden-layer NN on interaction-extended summary statistics.
 
@@ -63,6 +66,18 @@ def train_interaction(
             projection covariances instead of the Gaussian-latent Sigma.
         reg_a: L2 regularization strength for second-layer weights.
         reg_W: L2 regularization strength for first-layer weights.
+        sigma_other2: Cross-block phenotype noise variance
+            = max(0, E[y^2] - block_b_variance_explained).
+            When provided together with n_train, enables rank-1 collapsed
+            gradient with James-Stein denoising of q_k.  When SNR < 1 the
+            interaction gradient vanishes, recovering the Gaussian NN.
+        n_train: Training sample size used to estimate Gamma.  Required to
+            activate denoising alongside sigma_other2.
+        validation_data: Optional dict with keys "Sigma_beta_val", "Gamma_val",
+            "E_y2_val".  When provided, enables validation-based early stopping:
+            validation loss is checked every 50 iterations; if it has not improved
+            for 200 consecutive iterations, training stops and the weights from the
+            best validation iteration are returned.
 
     Returns:
         TrainResult with optimized (a, W) and loss history.
@@ -82,10 +97,19 @@ def train_interaction(
     loss_history = []
     converged = False
 
+    # Validation early-stopping state
+    use_val = validation_data is not None
+    best_val_loss = float("inf")
+    best_a = a.copy()
+    best_W = W.copy()
+    val_no_improve_iters = 0
+    val_check_interval = 50
+    val_patience = 200  # stop if no improvement for this many iterations
+
     for i in range(max_iters):
         loss = compute_interaction_loss(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
-            reg_a, reg_W,
+            reg_a, reg_W, sigma_other2=sigma_other2, n_train=n_train,
         )
         loss_history.append(loss)
 
@@ -98,9 +122,31 @@ def train_interaction(
                 converged = True
                 break
 
+        # Validation-based early stopping
+        if use_val and i % val_check_interval == 0:
+            val_loss = compute_interaction_loss(
+                a, W, Sigma,
+                validation_data["Sigma_beta_val"], validation_data["E_y2_val"],
+                validation_data["Gamma_val"], activation, Cov_ref,
+                reg_a, reg_W, sigma_other2=sigma_other2, n_train=n_train,
+            )
+            if val_loss < best_val_loss - 1e-10:
+                best_val_loss = val_loss
+                best_a = a.copy()
+                best_W = W.copy()
+                val_no_improve_iters = 0
+            else:
+                val_no_improve_iters += val_check_interval
+                if val_no_improve_iters >= val_patience:
+                    a = best_a
+                    W = best_W
+                    converged = True
+                    break
+
         grad_a, grad_W = compute_interaction_gradients(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
             reg_a, reg_W,
+            sigma_other2=sigma_other2, n_train=n_train,
         )
 
         combined_norm = np.sqrt(np.sum(grad_a**2) + np.sum(grad_W**2))
@@ -115,7 +161,7 @@ def train_interaction(
             W_new = W - step_lr * grad_W
             new_loss = compute_interaction_loss(
                 a_new, W_new, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
-                reg_a, reg_W,
+                reg_a, reg_W, sigma_other2=sigma_other2, n_train=n_train,
             )
             if new_loss <= loss + 1e-10:
                 break
@@ -130,9 +176,25 @@ def train_interaction(
     if not converged:
         loss = compute_interaction_loss(
             a, W, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
-            reg_a, reg_W,
+            reg_a, reg_W, sigma_other2=sigma_other2, n_train=n_train,
         )
         loss_history.append(loss)
+
+    # "Do no harm": if a warm start was provided and the interaction optimizer
+    # ended up at a worse training loss, return the warm start unchanged.
+    if a_init is not None and W_init is not None:
+        warmstart_loss = compute_interaction_loss(
+            a_init, W_init, Sigma, Sigma_beta, E_y2, Gamma, activation, Cov_ref,
+            reg_a, reg_W, sigma_other2=sigma_other2, n_train=n_train,
+        )
+        if loss_history[-1] > warmstart_loss - 1e-10:
+            return TrainResult(
+                a=a_init.copy(),
+                W=W_init.copy(),
+                loss_history=loss_history,
+                converged=converged,
+                n_iters=len(loss_history),
+            )
 
     return TrainResult(
         a=a,

@@ -36,7 +36,9 @@ from .gaussian_integrals import (
 )
 from .interaction_integrals import (
     interaction_cross_moment,
+    interaction_cross_moment_denoised,
     interaction_cross_moment_grad,
+    interaction_cross_moment_grad_denoised,
 )
 
 
@@ -51,6 +53,8 @@ def compute_interaction_loss(
     Cov_ref: np.ndarray | None = None,
     reg_a: float = 0.0,
     reg_W: float = 0.0,
+    sigma_other2: float | None = None,
+    n_train: int | None = None,
 ) -> float:
     """Compute the interaction-extended population risk.
 
@@ -72,18 +76,27 @@ def compute_interaction_loss(
             of Sigma, correcting the ~100% bias on binomial data.
         reg_a: L2 regularization strength for second-layer weights.
         reg_W: L2 regularization strength for first-layer weights.
+        sigma_other2: Cross-block phenotype noise variance for J-S denoising.
+        n_train: Training sample size; required alongside sigma_other2 to
+            activate denoising.
 
     Returns:
         Scalar population risk (with optional regularization).
     """
     m = len(a)
     Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
+    use_denoised = sigma_other2 is not None and n_train is not None
 
     E_y_f = 0.0
     for k in range(m):
+        if use_denoised:
+            int_term = interaction_cross_moment_denoised(
+                Sigma, Gamma, W[k], activation, sigma_other2, n_train
+            )
+        else:
+            int_term = interaction_cross_moment(Sigma, Gamma, W[k], activation)
         E_y_f += a[k] * (
-            stein_cross_moment(Sigma, W[k], Sigma_beta, activation)
-            + interaction_cross_moment(Sigma, Gamma, W[k], activation)
+            stein_cross_moment(Sigma, W[k], Sigma_beta, activation) + int_term
         )
 
     E_f2 = 0.0
@@ -108,6 +121,8 @@ def compute_interaction_grad_a(
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
     reg_a: float = 0.0,
+    sigma_other2: float | None = None,
+    n_train: int | None = None,
 ) -> np.ndarray:
     """Gradient of L_int w.r.t. second-layer weights a.
 
@@ -117,15 +132,24 @@ def compute_interaction_grad_a(
 
     When Cov_ref is provided, the E[sigma_k sigma_l] terms use
     Cov_ref for projection covariances instead of Sigma.
+
+    When sigma_other2 and n_train are provided, uses J-S denoised
+    interaction cross-moment for consistency with the denoised W-gradient.
     """
     m = len(a)
     Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
+    use_denoised = sigma_other2 is not None and n_train is not None
     grad = np.zeros(m)
 
     for k in range(m):
+        if use_denoised:
+            int_term = interaction_cross_moment_denoised(
+                Sigma, Gamma, W[k], activation, sigma_other2, n_train
+            )
+        else:
+            int_term = interaction_cross_moment(Sigma, Gamma, W[k], activation)
         E_y_sigma_k = (
-            stein_cross_moment(Sigma, W[k], Sigma_beta, activation)
-            + interaction_cross_moment(Sigma, Gamma, W[k], activation)
+            stein_cross_moment(Sigma, W[k], Sigma_beta, activation) + int_term
         )
 
         E_f_sigma_k = 0.0
@@ -149,6 +173,8 @@ def compute_interaction_grad_W(
     activation: str = "relu",
     Cov_ref: np.ndarray | None = None,
     reg_W: float = 0.0,
+    sigma_other2: float | None = None,
+    n_train: int | None = None,
 ) -> np.ndarray:
     r"""Gradient of L_int w.r.t. first-layer weights W.
 
@@ -165,6 +191,11 @@ def compute_interaction_grad_W(
     The chain rule for the cross term goes through C_kl:
         dv_k/dw_{k,j} = 2 (Cov_ref @ w_k)_j
         dc_{kl}/dw_{k,j} = (Cov_ref @ w_l)_j
+
+    When sigma_other2 and n_train are provided, the interaction gradient
+    uses rank-1 collapse + James-Stein denoising to suppress cross-block
+    noise in Gamma.  When SNR < 1 the interaction gradient vanishes and
+    the optimizer recovers the Gaussian NN solution exactly.
     """
     _, E_sigma_prime_fn, _ = get_activation(activation)
     dE_sp_dv, grad_E_ss = get_activation_derivs(activation)
@@ -172,6 +203,7 @@ def compute_interaction_grad_W(
     m, p = W.shape
     Sigma_f2 = Cov_ref if Cov_ref is not None else Sigma
     grad_W = np.zeros_like(W)
+    use_denoised = sigma_other2 is not None and n_train is not None
 
     Sw = Sigma @ W.T      # (p, m) — for Stein/interaction terms
     Cw = Sigma_f2 @ W.T   # (p, m) — for E[f^2] cross terms
@@ -189,10 +221,15 @@ def compute_interaction_grad_W(
             Sigma_beta * E_sp + s_k * dEsp_dv * 2.0 * Sw_k
         )
 
-        # Interaction gradient (uses Sigma for v_k)
-        int_grad = -2.0 * a[k] * interaction_cross_moment_grad(
-            Sigma, Gamma, W[k], activation,
-        )
+        # Interaction gradient: denoised (rank-1 collapse + J-S) or standard
+        if use_denoised:
+            int_grad = -2.0 * a[k] * interaction_cross_moment_grad_denoised(
+                Sigma, Gamma, W[k], activation, sigma_other2, n_train,
+            )
+        else:
+            int_grad = -2.0 * a[k] * interaction_cross_moment_grad(
+                Sigma, Gamma, W[k], activation,
+            )
 
         # Cross terms: d/dw_k E[sigma_k sigma_l] using Cov_ref
         Cw_k = Cw[:, k]
@@ -223,6 +260,8 @@ def compute_interaction_gradients(
     Cov_ref: np.ndarray | None = None,
     reg_a: float = 0.0,
     reg_W: float = 0.0,
+    sigma_other2: float | None = None,
+    n_train: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute both gradients (dL/da, dL/dW) for the interaction loss.
 
@@ -231,10 +270,19 @@ def compute_interaction_gradients(
             Passed through to both gradient functions.
         reg_a: L2 regularization strength for second-layer weights.
         reg_W: L2 regularization strength for first-layer weights.
+        sigma_other2: Cross-block phenotype noise variance for J-S denoising.
+            When provided alongside n_train, enables rank-1 collapsed gradient.
+        n_train: Training sample size used to estimate Gamma.
 
     Returns:
         (grad_a, grad_W) -- shapes (m,) and (m, p).
     """
-    grad_a = compute_interaction_grad_a(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_a)
-    grad_W = compute_interaction_grad_W(a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_W)
+    grad_a = compute_interaction_grad_a(
+        a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_a,
+        sigma_other2=sigma_other2, n_train=n_train,
+    )
+    grad_W = compute_interaction_grad_W(
+        a, W, Sigma, Sigma_beta, Gamma, activation, Cov_ref, reg_W,
+        sigma_other2=sigma_other2, n_train=n_train,
+    )
     return grad_a, grad_W

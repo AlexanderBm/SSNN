@@ -108,6 +108,81 @@ def compute_residual_sigma_beta(
     return Sigma_beta - Sigma @ beta_hat
 
 
+def compute_genome_wide_residual_gamma(
+    X_blocks: list[np.ndarray],
+    y: np.ndarray,
+    beta_hat_blocks: list[np.ndarray],
+    n: int,
+) -> list[np.ndarray]:
+    """Two-pass genome-wide Γ residualization using leave-one-out linear residuals.
+
+    For each block b:
+      r_b = y - Σ_{b'≠b} X_{b'} @ beta_hat_{b'}  (leave-one-out residual)
+      Γ_b = (1/n) X_b^T diag(r_b) X_b
+
+    This removes cross-block linear contamination from Γ.  The noise in Γ_b
+    now comes from Var(r_b) instead of Var(y), reducing the MP threshold by
+    approximately (1 - R²_other_blocks).
+
+    Block b's own linear signal remains in r_b, so the within-block correction
+    from compute_residual_gamma() is still needed; this function is orthogonal
+    to that correction (it handles cross-block contamination only).
+
+    Args:
+        X_blocks: list of (n, p_b) centered genotype matrices (training data).
+        y: (n,) phenotype vector (training data, centered).
+        beta_hat_blocks: list of (p_b,) fitted ridge weights per block.
+        n: sample size (must equal len(y)).
+
+    Returns:
+        list of (p_b, p_b) Γ matrices computed against leave-one-out residuals.
+    """
+    B = len(beta_hat_blocks)
+
+    # Compute genome-wide linear PRS once (sum over all blocks)
+    prs_total = sum(X_blocks[b] @ beta_hat_blocks[b] for b in range(B))
+
+    Gammas = []
+    for b in range(B):
+        # Leave-one-out: remove all blocks except b from the phenotype
+        prs_other = prs_total - X_blocks[b] @ beta_hat_blocks[b]
+        r_b = y - prs_other  # preserves block b's full signal (linear + epistatic)
+        Gamma_b = X_blocks[b].T @ (X_blocks[b] * r_b[:, None]) / n
+        Gammas.append(Gamma_b)
+
+    return Gammas
+
+
+def compute_residual_sigma_other2(
+    E_y2: float,
+    Sigma_beta_blocks: list[np.ndarray],
+    beta_hat_blocks: list[np.ndarray],
+    block_idx: int,
+) -> float:
+    """σ²_other for the leave-one-out residual r_b = y - Σ_{b'≠b} β̂_{b'}^T x_{b'}.
+
+    Var(r_b) ≈ E[y²] - Σ_{b'≠b} Σ_β_{b'}^T β̂_{b'}
+
+    This is the correct noise variance to pass to triage_block() and denoise_gamma()
+    when Γ was computed using compute_genome_wide_residual_gamma().
+
+    Args:
+        E_y2: global E[y²].
+        Sigma_beta_blocks: list of (p_b,) marginal association vectors.
+        beta_hat_blocks: list of (p_b,) fitted linear weight vectors.
+        block_idx: index of the block being processed (excluded from PVE sum).
+
+    Returns:
+        Scalar noise variance (clamped to ≥ 1e-6).
+    """
+    pve_other = sum(
+        max(0.0, float(np.dot(Sigma_beta_blocks[b], beta_hat_blocks[b])))
+        for b in range(len(beta_hat_blocks))
+        if b != block_idx
+    )
+    return max(1e-6, E_y2 - pve_other)
+
+
 def compute_residual_e_y2(
     E_y2: float,
     Sigma_beta_blocks: list[np.ndarray],

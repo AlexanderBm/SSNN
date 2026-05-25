@@ -39,11 +39,12 @@ def train(
     verbose: bool = False,
     reg_a: float = 0.0,
     reg_W: float = 0.0,
+    Cov_ref: np.ndarray | None = None,
 ) -> TrainResult:
     """Train a 1-hidden-layer NN on summary statistics via gradient descent.
 
     Args:
-        Sigma: (p, p) LD covariance matrix.
+        Sigma: (p, p) LD covariance matrix (used for Stein/E[yf] terms).
         Sigma_beta: (p,) = Sigma @ beta*.
         E_y2: scalar E[y^2].
         m: Number of hidden units.
@@ -56,6 +57,8 @@ def train(
         verbose: Print progress every 500 iterations.
         reg_a: L2 regularization strength for second-layer weights.
         reg_W: L2 regularization strength for first-layer weights.
+        Cov_ref: (p, p) empirical covariance for E[f^2] term (corrects
+            binomial bias). Uses Sigma when None.
 
     Returns:
         TrainResult with optimized (a, W) and loss history.
@@ -71,7 +74,7 @@ def train(
     converged = False
 
     for i in range(max_iters):
-        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W)
+        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W, Cov_ref)
         loss_history.append(loss)
 
         if verbose and i % 500 == 0:
@@ -83,14 +86,14 @@ def train(
                 converged = True
                 break
 
-        grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation, reg_a)
-        grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation, reg_W)
+        grad_a = compute_grad_a(a, W, Sigma, Sigma_beta, activation, reg_a, Cov_ref)
+        grad_W = compute_grad_W(a, W, Sigma, Sigma_beta, activation, reg_W, Cov_ref)
 
         a = a - lr * grad_a
         W = W - lr * grad_W
 
     if not converged:
-        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W)
+        loss = compute_loss(a, W, Sigma, Sigma_beta, E_y2, activation, reg_a, reg_W, Cov_ref)
         loss_history.append(loss)
 
     return TrainResult(
